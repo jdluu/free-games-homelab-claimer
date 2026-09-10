@@ -249,7 +249,24 @@ class EpicGamesClaimer(BaseClaimer):
                     pass
                 
                 if wait_sec == 3:
-                    logger.warning("Waiting for login to finish. If Captcha appeared, solve it via VNC! (2 min limit)")
+                    logger.warning("Waiting for login to finish. If CAPTCHA appeared, solve it via VNC! (2 min limit)")
+                # Epic currently embeds hCaptcha in an iframe during email/login
+                # verification. Record that state explicitly so failures are not
+                # misdiagnosed as missing credentials or checkout failures.
+                if wait_sec in (3, 30, 90):
+                    try:
+                        captcha_present = await self.page.evaluate("""
+                            (() => [...document.querySelectorAll('iframe')].some(f => {
+                                const src = (f.getAttribute('src') || '').toLowerCase();
+                                const title = (f.getAttribute('title') || '').toLowerCase();
+                                return src.includes('hcaptcha') || src.includes('captcha') || title.includes('captcha');
+                            }))()
+                        """)
+                        if captcha_present:
+                            logger.warning("Epic hCaptcha challenge detected. Complete it in the FGC VNC window; automated login cannot bypass it.")
+                            await self.take_screenshot(f"epic_hcaptcha_attempt_{attempt + 1}")
+                    except Exception:
+                        pass
                 await self.sleep(1)
 
             # verify success
