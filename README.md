@@ -1,5 +1,11 @@
 # free-games-claimer-remaster
 
+## Personal fork additions
+
+This personal homelab fork retains the upstream functionality while adding targeted reliability improvements: a structured Steam **Free to Keep** parser that avoids temporary free-weekend offers, persistent tracking of claimed and skipped Steam entitlements, automatic handling of free DLC whose base game is free, BWS-backed runtime credentials, and a pinned GHCR deployment with health checks and automatic restarts.
+
+---
+
 <p align="center">
   <img alt="logo-free-games-claimer" src="https://user-images.githubusercontent.com/493741/214588518-a4c89998-127e-4a8c-9b1e-ee4a9d075715.png" />
 </p>
