@@ -116,7 +116,7 @@ class SteamClaimer(BaseClaimer):
         The page structure has cards with:
         - "View Store" links → https://store.steampowered.com/app/APPID/... or /sub/...
         - Game title in <b> tags
-        - "Free to Keep" (green) or "Play For Free" (orange) text
+        - Structured badges: cat-free-to-keep (claim) or cat-play-for-free (skip)
         """
         games = []
 
@@ -136,10 +136,13 @@ class SteamClaimer(BaseClaimer):
             store_url = store_match.group(1)
             app_id = store_match.group(2)
 
-            # Check if this specific card has "Free to Keep" or "100%"
-            has_free_to_keep = bool(re.search(r'(?i)Free to Keep|100%', card_html))
-
-            if not has_free_to_keep:
+            # Use SteamDB's structured badge. The first badge belongs to the
+            # game card; later footer text must never make a weekend promo claimable.
+            badge_match = re.search(
+                r'<div class="cat (cat-free-to-keep|cat-play-for-free)"',
+                card_html,
+            )
+            if not badge_match or badge_match.group(1) != "cat-free-to-keep":
                 continue
 
             # Extract title from <b> or <h1>..<h6> tags
