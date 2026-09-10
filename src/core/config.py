@@ -57,6 +57,8 @@ class Config:
     vnc_login_timeout: int = _int("VNC_LOGIN_TIMEOUT", 180) # seconds
     novnc_port: str | None = os.getenv("NOVNC_PORT")
     vnc_ip: str = os.getenv("VNC_IP", "localhost")
+    # Tailnet-only HTTPS URL for remote manual login.
+    vnc_remote_url: str | None = os.getenv("VNC_REMOTE_URL")
     scheduler_hours: int = _int("SCHEDULER_HOURS", 12)
     scheduler_timezone: str = os.getenv("SCHEDULER_TIMEZONE", "UTC").strip() or "UTC"
     scheduler_fixed_times: str = os.getenv("SCHEDULER_FIXED_TIMES", "")

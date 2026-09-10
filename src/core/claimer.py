@@ -352,8 +352,15 @@ class BaseClaimer:
             self.logger.info(custom_msg.replace("**", "").replace("!", ""))
         else:
             if cfg.novnc_port:
-                self.logger.info("Open http://%s:%s to login manually (waiting %ds).", cfg.vnc_ip, cfg.novnc_port, timeout)
-                msg = f"ACTION REQUIRED: {self.store_name} manual login required. Open http://{cfg.vnc_ip}:{cfg.novnc_port} to login via VNC (waiting {timeout}s)."
+                if cfg.vnc_remote_url:
+                    url = cfg.vnc_remote_url.rstrip("/")
+                    self.logger.info("Open %s to login manually (waiting %ds).", url, timeout)
+                    msg = (f"ACTION REQUIRED: {self.store_name} needs human verification.\n"
+                           f"Open {url} from a device connected to Tailscale, complete the CAPTCHA/login, "
+                           f"and leave the browser open. The claimer will resume automatically (waiting {timeout}s).")
+                else:
+                    self.logger.info("Open http://%s:%s to login manually (waiting %ds).", cfg.vnc_ip, cfg.novnc_port, timeout)
+                    msg = f"ACTION REQUIRED: {self.store_name} manual login required. Open http://{cfg.vnc_ip}:{cfg.novnc_port} to login via VNC (waiting {timeout}s)."
             else:
                 self.logger.info("Please login via VNC (waiting %ds).", timeout)
                 msg = f"ACTION REQUIRED: {self.store_name} manual login required via VNC (waiting {timeout}s)."

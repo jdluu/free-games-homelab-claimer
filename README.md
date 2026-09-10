@@ -2,7 +2,7 @@
 
 ## Personal fork additions
 
-This personal homelab fork retains the upstream functionality while adding targeted reliability improvements: a structured Steam **Free to Keep** parser that avoids temporary free-weekend offers, persistent tracking of claimed and skipped Steam entitlements, automatic handling of free DLC whose base game is free, BWS-backed runtime credentials, and a pinned GHCR deployment with health checks and automatic restarts.
+This personal homelab fork retains the upstream functionality while adding targeted reliability improvements: a structured Steam **Free to Keep** parser that avoids temporary free-weekend offers, persistent tracking of claimed and skipped Steam entitlements, automatic handling of free DLC whose base game is free, BWS-backed runtime credentials, and a pinned GHCR deployment with health checks and automatic restarts. Interactive login support can notify Discord with a private noVNC link; the device opening it must be connected to the Tailscale tailnet.
 
 ---
 
@@ -28,7 +28,7 @@ Automatically claims free games on:
 - <img alt="logo indiegala" src="https://www.indiegala.com/favicon.ico" width="20" align="middle" /> **IndieGala** – free Steam keys & DRM-free games
 - <img alt="logo alienware" src="https://www.alienwarearena.com/favicon.ico" width="20" align="middle" /> **Alienware Arena** – (Notify-only) ARP point giveaways
 
-Runs as a Docker container with a built-in scheduler (every 12 hours by default, with optional fixed daily run times). Login via **VNC in browser** or automated credentials.
+Runs as a Docker container with a built-in scheduler (every 12 hours by default, with optional fixed daily run times). Login via **VNC in browser** or automated credentials. If Epic presents hCaptcha, Discord can request manual verification through the private noVNC interface; the phone, laptop, or PC opening that link must be connected to Tailscale.
 
 ---
 
