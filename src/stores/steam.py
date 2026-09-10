@@ -395,6 +395,23 @@ class SteamClaimer(BaseClaimer):
         app_id = game.get("app_id", "")
         source = game.get("source", "unknown")
 
+        # Avoid re-opening and re-claiming games already recorded as owned.
+        # Ownership can still be discovered live when the database has no record.
+        async with async_session() as session:
+            from sqlalchemy import select
+            from src.core.database import ClaimedGame
+            prior = await session.execute(
+                select(ClaimedGame).where(
+                    ClaimedGame.store == "steam",
+                    ClaimedGame.user == (self.user or "unknown"),
+                    ClaimedGame.game_id == app_id,
+                    ClaimedGame.status.in_(["claimed", "existed"]),
+                ).limit(1)
+            )
+            if prior.scalars().first():
+                logger.info("Skipping '%s' — already recorded in the library.", title)
+                return
+
         try:
             await self.page.get(url)
             await self.sleep(4)
