@@ -831,7 +831,20 @@ class SteamClaimer(BaseClaimer):
                 "url": base_url,
                 "status": "claimed"
             })
-            
+            # Record the base entitlement separately so the same base game is
+            # not re-added when another free DLC references it later.
+            if isinstance(base_url, str):
+                base_id = self._extract_game_id(base_url)
+                if base_id:
+                    async with async_session() as session:
+                        obj, _ = await get_or_create(
+                            session, store="steam", user=self.user or "unknown",
+                            game_id=base_id, title=bg_title_raw, url=base_url,
+                            status="claimed",
+                        )
+                        obj.status = "claimed"
+                        await session.commit()
+
             await self.sleep(5)
             
             # Go back to the DLC page
