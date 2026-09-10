@@ -405,7 +405,7 @@ class SteamClaimer(BaseClaimer):
                     ClaimedGame.store == "steam",
                     ClaimedGame.user == (self.user or "unknown"),
                     ClaimedGame.game_id == app_id,
-                    ClaimedGame.status.in_(["claimed", "existed"]),
+                    ClaimedGame.status.in_(["claimed", "existed", "skipped:missing_base"]),
                 ).limit(1)
             )
             if prior.scalars().first():
@@ -461,12 +461,28 @@ class SteamClaimer(BaseClaimer):
         notify_game = {"title": page_title, "url": current_url, "status": "failed"}
         self.notify_games.append(notify_game)
 
-        # Ensure base game is owned if this is a DLC
+        # Ensure base game is owned if this is a DLC. Persist a terminal
+        # missing-base result so later scheduler runs do not retry a paid DLC.
         has_base_game = await self._ensure_base_game(current_url)
         if not has_base_game:
-            logger.warning("Skipping DLC '%s' because required base game is missing.", page_title)
-            notify_game["status"] = "failed:missing_base"
+            logger.warning(
+                "Skipping DLC '%s': required base game is not owned and is not free. "
+                "Will not retry unless ownership changes.", page_title
+            )
+            notify_game["status"] = "skipped:missing_base"
+            async with async_session() as session:
+                obj, _ = await get_or_create(
+                    session, store="steam", user=self.user or "unknown",
+                    game_id=app_id, title=page_title, url=current_url,
+                    status="skipped:missing_base",
+                )
+                obj.status = "skipped:missing_base"
+                await session.commit()
             return
+
+        # A base game may have been added while resolving the DLC. Continue
+        # with the DLC page and let the normal owned check short-circuit it.
+        current_url = await self.page.evaluate("window.location.href")
 
         # Re-check age gate after returning from base game page
         current_url = await self.page.evaluate("window.location.href")
