@@ -52,8 +52,12 @@ class EpicGamesClaimer(BaseClaimer):
             await self.page.get(URL_CLAIM)
             await self.sleep(3)
 
-            # Step 1: Make sure we are logged in
-            await self._ensure_logged_in()
+            # Step 1: Make sure we are logged in. Never attempt checkout
+            # after an unsuccessful login; Epic may still expose product pages
+            # while the browser is unauthenticated.
+            if not await self._ensure_logged_in():
+                logger.warning("[Epic] Login was not verified; skipping claim run.")
+                return
 
             # Step 2: Find which games are currently free
             free_games = await self._detect_free_games()
@@ -115,7 +119,7 @@ class EpicGamesClaimer(BaseClaimer):
     # Login
     # ------------------------------------------------------------------
 
-    async def _ensure_logged_in(self) -> None:
+    async def _ensure_logged_in(self) -> bool:
         """Check if we're logged into Epic. If not, try automatic login or VNC fallback."""
         
         # Navigate to Epic Store frontend to initialize cookies/session natively
@@ -176,7 +180,7 @@ class EpicGamesClaimer(BaseClaimer):
             if await _is_logged_in():
                 self.user = await _get_display_name() or cfg.eg_email or "EpicUser"
                 self.log_signed_in()
-                return
+                return True
             await self.sleep(2)
 
         # Read credentials from the .env file
@@ -189,11 +193,11 @@ class EpicGamesClaimer(BaseClaimer):
             logged_in = await self._wait_for_vnc_login(_is_logged_in)
             if not logged_in:
                 logger.warning("VNC login timed out – skipping.")
-                return
+                return False
             
             self.user = await _get_display_name() or cfg.eg_email or "EpicUser"
             self.log_signed_in()
-            return
+            return True
 
         # Automated stealth login loop
         for attempt in range(3):
@@ -275,9 +279,10 @@ class EpicGamesClaimer(BaseClaimer):
             if await _is_logged_in():
                 self.user = await _get_display_name() or cfg.eg_email or "EpicUser"
                 self.log_signed_in()
-                return
+                return True
         
         logger.warning("Automated login failed after 3 attempts.")
+        return False
 
     async def _navigate_organically_to_login(self) -> None:
         """Navigates to the login page mimicking a click from the store, preserving Referer headers."""
