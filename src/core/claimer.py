@@ -258,13 +258,29 @@ class BaseClaimer:
         except Exception as e:
             self.logger.debug("Failed to seed Chrome preferences: %s", e)
 
-        self.browser = await uc.start(
+        browser_kwargs = dict(
             headless=headless,
             sandbox=False,  # required when running as root in Docker
             browser_executable_path=chrome_path,
             browser_args=args,
             user_data_dir=str(store_browser_dir),
         )
+        try:
+            self.browser = await uc.start(**browser_kwargs)
+        except Exception as first_error:
+            # A GPU/WebGL startup failure must not take down both stores. Keep
+            # the preferred GPU path for Epic, but retry once with software
+            # rendering when Chrome never exposes its DevTools endpoint.
+            if "--disable-gpu" in args:
+                raise
+            self.logger.warning(
+                "Chrome startup failed; retrying once with GPU disabled: %s",
+                first_error,
+            )
+            fallback_args = [*args, "--disable-gpu"]
+            self.browser = await uc.start(
+                **{**browser_kwargs, "browser_args": fallback_args}
+            )
 
         # Get the main tab
         self.page = await self.browser.get("about:blank")
