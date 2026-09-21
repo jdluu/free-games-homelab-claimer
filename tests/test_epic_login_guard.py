@@ -52,7 +52,7 @@ def test_remote_vnc_prompt_requires_tailscale(monkeypatch):
     from src.core import claimer as claimer_module
 
     monkeypatch.setattr(claimer_module.cfg, "novnc_port", "7080")
-    monkeypatch.setattr(claimer_module.cfg, "vnc_remote_url", "https://debian.tail38ae82.ts.net:8443/")
+    monkeypatch.setattr(claimer_module.cfg, "vnc_remote_url", "https://debian.tail38ae82.ts.net:9443/")
     monkeypatch.setattr(claimer_module.cfg, "notify_login_request", True)
 
     import logging
@@ -73,5 +73,5 @@ def test_remote_vnc_prompt_requires_tailscale(monkeypatch):
 
     obj = _Base()
     asyncio.run(claimer_module.BaseClaimer._wait_for_vnc_login(obj, never_logged_in, timeout=1, interval=1))
-    assert any("debian.tail38ae82.ts.net:8443" in m for m in messages)
+    assert any("debian.tail38ae82.ts.net:9443" in m for m in messages)
     assert any("connected to Tailscale" in m for m in messages)
