@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from pathlib import Path
 from datetime import datetime, timezone
 
@@ -187,6 +188,38 @@ class BaseClaimer:
     }
     """
 
+    async def _open_initial_page(self, timeout: float = 30.0) -> uc.Tab:
+        """Open about:blank in Chrome's first tab, waiting for that tab to exist.
+
+        nodriver's ``Browser.get()`` selects the first page target with a bare
+        ``next(filter(...))`` over the target list. If Chrome has not registered
+        its initial tab yet, that raises StopIteration, which asyncio re-raises
+        as ``RuntimeError: coroutine raised StopIteration`` — killing the whole
+        run before a single game is processed. It is a startup race rather than
+        a persistent condition, so poll for the target instead of calling
+        ``get()`` blind, and retry if the tab disappears between check and call.
+        """
+        deadline = time.monotonic() + timeout
+        last_error: Exception | None = None
+        browser = self.browser
+        assert browser is not None  # set by uc.start() in start_browser()
+        while True:
+            if browser.tabs:
+                try:
+                    return await browser.get("about:blank")
+                except (StopIteration, RuntimeError) as e:
+                    # Lost the race between the check and get(); go round again.
+                    last_error = e
+            if time.monotonic() >= deadline:
+                raise RuntimeError(
+                    f"Chrome exposed no usable page target within {timeout:.0f}s"
+                ) from last_error
+            try:
+                await browser.update_targets()
+            except Exception as e:  # keep polling; the CDP socket may be mid-handshake
+                self.logger.debug("update_targets failed while waiting: %s", e)
+            await asyncio.sleep(0.25)
+
     async def start_browser(
         self,
         *,
@@ -324,8 +357,10 @@ class BaseClaimer:
                 **{**browser_kwargs, "browser_args": fallback_args}
             )
 
-        # Get the main tab
-        self.page = await self.browser.get("about:blank")
+        # Get the main tab. Do not call browser.get() directly here: it races
+        # Chrome's initial page target and takes the whole run down when it
+        # loses. See _open_initial_page().
+        self.page = await self._open_initial_page()
 
         # --- Inject stealth patches via CDP (runs BEFORE any page JS) ---
         # Unlike page.evaluate(), addScriptToEvaluateOnNewDocument ensures

@@ -23,6 +23,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 - Epic claim failures and GOG redemption results are no longer sent twice.
 - Steam Guard prompts respect `NOTIFY_LOGIN_REQUEST`.
 - Local virtual environments are excluded from Git and Docker build contexts.
+- Browser startup no longer dies with `RuntimeError: coroutine raised StopIteration`. nodriver's `Browser.get()` selects the first page target with a bare `next(filter(...))`, so calling it before Chrome has registered its initial tab raised `StopIteration` and aborted the entire run before any game was examined. The initial tab is now waited for (and the lookup retried) instead of raced.
 
 ## [1.2] - 2026-07-01
 
