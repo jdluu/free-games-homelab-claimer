@@ -12,7 +12,7 @@ import nodriver as uc
 import pyotp
 from tenacity import retry, stop_after_attempt, wait_exponential
 
-from src.core.claimer import BaseClaimer, now_str
+from src.core.claimer import BaseClaimer, CHALLENGE_JS, now_str
 from src.core.config import cfg
 from src.core.database import async_session, get_or_create
 from src.core.notifier import notify
@@ -772,6 +772,15 @@ class EpicGamesClaimer(BaseClaimer):
                 else:
                     logger.info("After Get: no immediate state change detected")
 
+            # Epic's quick-purchase ("Get") can escalate its otherwise invisible
+            # hCaptcha to a visible challenge right after the click. That blocks
+            # the whole checkout and cannot be answered automatically, so hand it
+            # to the user over VNC instead of polling until the run gives up.
+            if not await self._clear_checkout_challenge(title):
+                logger.warning("Captcha on the checkout for '%s' was not solved in time.", title)
+                await self.take_screenshot(f"epic_captcha_timeout_{title[:20]}")
+                return False
+
             await self.sleep(3)
 
             # ── Step 2: Handle intermediate dialogs ──
@@ -921,6 +930,11 @@ class EpicGamesClaimer(BaseClaimer):
 
             # ── Step 4: Verify claim success ──
             for _ in range(15):
+                # A captcha holds the order while the page text can already read
+                # as success, so never confirm a claim while one is up.
+                if not await self._clear_checkout_challenge(title, ask=False):
+                    logger.warning("Captcha still holding the checkout for '%s'.", title)
+                    return False
                 success = await self.page.evaluate(
                     """
                     (() => {
@@ -959,6 +973,38 @@ class EpicGamesClaimer(BaseClaimer):
         except Exception:
             logger.exception("Error in new checkout flow for '%s'.", title)
             return False
+
+    async def _checkout_challenge_present(self) -> bool:
+        """A human-check on the page, or inside the checkout frame where the page check cannot look."""
+        if await self._human_challenge_present():
+            return True
+        try:
+            page = self.page
+            assert page is not None
+            frame_id = self._find_purchase_frame(
+                await page.send(uc.cdp.page.get_frame_tree())
+            )
+            if not frame_id:
+                return False
+            ctx_id = await page.send(
+                uc.cdp.page.create_isolated_world(
+                    frame_id=frame_id,
+                    grant_univeral_access=True,
+                )
+            )
+            return bool(await self._eval_in_frame(ctx_id, CHALLENGE_JS))
+        except Exception as exc:
+            logger.debug("Could not look for a human check in the checkout frame: %s", exc)
+            return False
+
+    async def _clear_checkout_challenge(self, title: str, *, ask: bool = True) -> bool:
+        """Hand a checkout captcha to the user over VNC. True when there was none or it got solved."""
+        if not await self._checkout_challenge_present():
+            return True
+        logger.debug("Human check on the checkout for '%s'.", title)
+        return await self._wait_out_challenge(
+            "Epic", present_fn=self._checkout_challenge_present, ask=ask
+        )
 
     async def _cdp_click_element_by_text(
         self, text: str, *, tag: str = "button", timeout: int = 1

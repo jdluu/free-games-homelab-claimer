@@ -16,6 +16,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 - Regression tests for notification filtering, dispatch, and run aggregation.
 
 ### Fixed
+- Epic stealth patches now actually reach the page: the CDP `Page` domain is enabled before `addScriptToEvaluateOnNewDocument`, which Chrome otherwise accepts and then silently ignores. The browser previously exposed its raw container fingerprint (Mesa llvmpipe WebGL, Linux platform), which is what triggers Epic's bot checks.
+- Stealth fingerprint values are consistent with the real User-Agent again (`platform`/WebGL no longer claim Windows while the UA says Linux), and `--accept-lang` no longer leaks a `q=0.9` token into `navigator.languages`.
+- Epic checkout captchas are no longer mistaken for a missing "Add to library" button. A visible hCaptcha/Arkose/Cloudflare challenge on the checkout is detected, given a short window to auto-pass, and otherwise handed to the user with one VNC notification while the claim waits, instead of failing silently.
 - Failed claims no longer receive a success headline and remain visible when successful summaries are disabled.
 - Epic claim failures and GOG redemption results are no longer sent twice.
 - Steam Guard prompts respect `NOTIFY_LOGIN_REQUEST`.

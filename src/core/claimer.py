@@ -32,6 +32,41 @@ from src.core.config import cfg
 logger = logging.getLogger("fgc.claimer")
 
 
+# Looks for a human-check (hCaptcha / Arkose / Cloudflare Turnstile / reCAPTCHA /
+# DataDome) that is actually *visible and clickable*. Epic keeps a full-size
+# hCaptcha iframe on the page at all times, hidden by style, until it is really
+# needed — matching on the iframe alone produces constant false positives.
+CHALLENGE_JS = r"""
+(() => {
+    const t = (document.title || '').toLowerCase();
+    if (t.includes('just a moment') || t.includes('attention required') || t.includes('one more step')) return true;
+    if (document.querySelector('#challenge-form, #challenge-running, #cf-challenge-running')) return true;
+    const seen = el => {
+        const r = el.getBoundingClientRect();
+        if (r.width < 60 || r.height < 40) return false;
+        for (let n = el; n; n = n.parentElement) {
+            const st = getComputedStyle(n);
+            if (st.visibility === 'hidden' || st.display === 'none' || parseFloat(st.opacity) < 0.1) return false;
+        }
+        const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+        if (cx < 0 || cy < 0 || cx > innerWidth || cy > innerHeight) return false;
+        const at = document.elementFromPoint(cx, cy);
+        return !!at && (at === el || el.contains(at) || at.contains(el));
+    };
+    const rx = /hcaptcha|arkoselabs|funcaptcha|arkose|px-captcha|geetest|turnstile|recaptcha\/(api2|enterprise)\/(anchor|bframe)|datadome|captcha-delivery/i;
+    const badge = f => /recaptcha\/(api2|enterprise)\/anchor/i.test(f.getAttribute('src') || '') && /[?&]size=invisible/i.test(f.getAttribute('src') || '');
+    const frames = [...document.querySelectorAll('iframe')];
+    if (frames.some(f => rx.test((f.getAttribute('src') || '') + ' ' + (f.getAttribute('title') || '')) && !badge(f) && seen(f))) return true;
+    const widgets = [...document.querySelectorAll('.cf-turnstile, #h_captcha, #talon_frame_login_prod, #FunCaptcha, [id*="arkose" i], #datadome')];
+    if (widgets.some(seen)) return true;
+    const b = (document.body ? (document.body.innerText || '') : '').toLowerCase();
+    if (b.includes('verify you are human') || b.includes('checking your browser') || b.includes('complete a security check') || b.includes('needs to review the security of your connection')) return true;
+    if (b.includes("check that you're a real person") || b.includes('check that you are a real person') || b.includes('geo.captcha-delivery.com')) return true;
+    return false;
+})()
+"""
+
+
 def now_str() -> str:
     """Return a human-readable UTC timestamp string."""
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
@@ -99,26 +134,33 @@ class BaseClaimer:
         get: () => 8,
     });
 
-    // --- Platform (must match a real desktop) ---
+    // --- Platform (must stay consistent with the real User-Agent) ---
+    // The UA here is a Linux Chrome UA and navigator.userAgentData also reports
+    // Linux, so claiming 'Win32' would be a self-contradiction anti-bot vendors
+    // flag. Keep the real platform value.
     Object.defineProperty(navigator, 'platform', {
-        get: () => 'Win32',
+        get: () => 'Linux x86_64',
     });
 
     // --- WebGL vendor/renderer spoofing ---
-    // Epic's anti-bot checks WebGL capabilities; software renderers trigger captcha.
+    // Epic's anti-bot checks WebGL capabilities; the container renders through
+    // Mesa llvmpipe (software), which is a loud bot signal. Report a plausible
+    // GPU that matches the Linux UA: an NVIDIA card driven by ANGLE/OpenGL.
+    const _GPU_VENDOR = 'Google Inc. (NVIDIA Corporation)';
+    const _GPU_RENDERER = 'ANGLE (NVIDIA Corporation, NVIDIA GeForce GTX 1650/PCIe/SSE2, OpenGL 4.5.0 NVIDIA 535.183.01)';
     const _getParameter = WebGLRenderingContext.prototype.getParameter;
     WebGLRenderingContext.prototype.getParameter = function(param) {
         // UNMASKED_VENDOR_WEBGL
-        if (param === 0x9245) return 'Google Inc. (NVIDIA)';
+        if (param === 0x9245) return _GPU_VENDOR;
         // UNMASKED_RENDERER_WEBGL
-        if (param === 0x9246) return 'ANGLE (NVIDIA, NVIDIA GeForce GTX 1650 Direct3D11 vs_5_0 ps_5_0, D3D11)';
+        if (param === 0x9246) return _GPU_RENDERER;
         return _getParameter.call(this, param);
     };
     if (typeof WebGL2RenderingContext !== 'undefined') {
         const _getParameter2 = WebGL2RenderingContext.prototype.getParameter;
         WebGL2RenderingContext.prototype.getParameter = function(param) {
-            if (param === 0x9245) return 'Google Inc. (NVIDIA)';
-            if (param === 0x9246) return 'ANGLE (NVIDIA, NVIDIA GeForce GTX 1650 Direct3D11 vs_5_0 ps_5_0, D3D11)';
+            if (param === 0x9245) return _GPU_VENDOR;
+            if (param === 0x9246) return _GPU_RENDERER;
             return _getParameter2.call(this, param);
         };
     }
@@ -213,7 +255,7 @@ class BaseClaimer:
             "--hide-crash-restore-bubble",
             "--restore-last-session",
             "--lang=en-US",
-            "--accept-lang=en-US,en;q=0.9",
+            "--accept-lang=en-US,en",  # no q-values: Chrome copies this verbatim into navigator.languages
             "--disable-dev-shm-usage",     # Docker shared memory fix
             "--disable-smooth-scrolling",  # CPU optimization
             "--disable-extensions",        # CPU optimization
@@ -289,8 +331,20 @@ class BaseClaimer:
         # Unlike page.evaluate(), addScriptToEvaluateOnNewDocument ensures
         # our patches are active when the WAF/anti-bot first evaluates the
         # browser fingerprint on navigation.
+        #
+        # The Page domain MUST be enabled first: without it Chrome accepts
+        # Page.addScriptToEvaluateOnNewDocument and returns a script id, but the
+        # script is silently never run on subsequent documents — so the whole
+        # stealth layer was a no-op and Epic saw the raw llvmpipe/Linux
+        # fingerprint. Verify this stays true after any nodriver/Chrome upgrade.
+        page = self.page
+        assert page is not None  # set by browser.get() above
         try:
-            await self.page.send(
+            await page.send(uc.cdp.page.enable())
+        except Exception as e:
+            self.logger.debug("Page.enable failed: %s", e)
+        try:
+            await page.send(
                 uc.cdp.page.add_script_to_evaluate_on_new_document(
                     source=self._STEALTH_JS,
                 )
@@ -354,6 +408,67 @@ class BaseClaimer:
             return element
         except Exception:
             return None
+
+    async def _human_challenge_present(self) -> bool:
+        """True when the current page is showing a human-check we cannot solve.
+
+        Covers hCaptcha / Arkose (FunCaptcha) / Cloudflare Turnstile / reCAPTCHA
+        and DataDome. None of these can be answered automatically, so detecting
+        one lets a store hand it to the user for a one-time solve over VNC
+        instead of silently giving up. Only *visible, clickable* widgets count,
+        so a hidden challenge frame does not produce a false positive.
+        """
+        if not self.page:
+            return False
+        try:
+            return bool(await self.page.evaluate(CHALLENGE_JS))
+        except Exception:
+            return False
+
+    async def _wait_out_challenge(
+        self, label: str, *, settle: int = 12, present_fn=None, ask: bool = True
+    ) -> bool:
+        """Clear a human-check: let it auto-pass, else ask the user to solve it.
+
+        Waits up to ``settle`` seconds for a managed/invisible challenge to clear
+        on its own (so the user is not pinged needlessly). If it is still
+        blocking, sends one VNC alert and polls until it clears or the login
+        timeout is hit. ``present_fn`` lets a caller check somewhere other than
+        the page itself, e.g. inside the checkout iframe. ``ask=False`` only
+        waits for the auto-pass and never notifies, for a re-check on a
+        challenge the user has already been told about. Returns True when the
+        challenge is gone.
+        """
+        present = present_fn or self._human_challenge_present
+
+        waited = 0
+        while waited < settle:
+            if not await present():
+                return True
+            await asyncio.sleep(2)
+            waited += 2
+
+        if not ask:
+            return False
+
+        self.logger.warning(
+            "%s is behind a captcha human-check – requesting a manual solve via VNC.", label
+        )
+        target = ""
+        if cfg.novnc_port:
+            target = cfg.vnc_remote_url.rstrip("/") if cfg.vnc_remote_url else f"http://{cfg.vnc_ip}:{cfg.novnc_port}"
+        custom_msg = (
+            f"ACTION REQUIRED: {label} checkout needs human verification.\n"
+            f"A captcha must be solved before the game can be claimed.\n"
+            + (f"Open {target} from a device on Tailscale, solve it, and leave the browser open. "
+               if target else "Open the FGC VNC window, solve it, and leave the browser open. ")
+            + f"The claimer resumes automatically (waiting {cfg.vnc_login_timeout}s)."
+        )
+
+        async def _cleared() -> bool:
+            return not await present()
+
+        return await self._wait_for_vnc_login(_cleared, custom_msg=custom_msg)
 
     async def _wait_for_vnc_login(self, check_fn, *, timeout: int | None = None, interval: int = 5, log_interval: int = 60, custom_msg: str | None = None) -> bool:
         """Wait for manual VNC login.
